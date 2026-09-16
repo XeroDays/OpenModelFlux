@@ -23,6 +23,30 @@
     <form id="config-form" class="config-form">
       <div class="form-group">
         <div class="form-label-row">
+          <label class="form-label" for="api-url">API URL</label>
+          <span class="info-tip" tabindex="0" aria-describedby="api-url-tip">
+            <svg class="info-tip__icon" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+              <circle cx="7" cy="7" r="6.25" fill="none" stroke="currentColor" stroke-width="1.25"/>
+              <path fill="currentColor" d="M6.4 6.1h1.2V4.5H6.4v1.6zm0 3.4h1.2V6.9H6.4v2.6z"/>
+            </svg>
+            <span id="api-url-tip" class="info-tip__bubble" role="tooltip">
+              Paste the full chat completions endpoint. OpenRouter is the default. Any OpenAI-compatible server works if it uses the same protocol (OpenAI, Groq, Ollama, LM Studio, and similar).
+            </span>
+          </span>
+        </div>
+        <input
+          type="url"
+          id="api-url"
+          class="form-input"
+          value="https://openrouter.ai/api/v1/chat/completions"
+          placeholder="https://openrouter.ai/api/v1/chat/completions"
+          autocomplete="off"
+          required
+        />
+      </div>
+
+      <div class="form-group">
+        <div class="form-label-row">
           <label class="form-label" for="api-key">API Key</label>
           <span class="info-tip" tabindex="0" aria-describedby="api-key-tip">
             <svg class="info-tip__icon" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
@@ -30,7 +54,7 @@
               <path fill="currentColor" d="M6.4 6.1h1.2V4.5H6.4v1.6zm0 3.4h1.2V6.9H6.4v2.6z"/>
             </svg>
             <span id="api-key-tip" class="info-tip__bubble" role="tooltip">
-              Log in to the OpenRouter dashboard, generate an API key, and paste it here.
+              Paste the API key from your provider. For OpenRouter, generate one in the dashboard. Local servers can use a dummy value if they do not require a key.
             </span>
           </span>
         </div>
@@ -38,7 +62,7 @@
           type="password"
           id="api-key"
           class="form-input"
-          placeholder="Enter your OpenRouter API key"
+          placeholder="Enter your API key"
           autocomplete="off"
           required
         />
@@ -53,7 +77,7 @@
               <path fill="currentColor" d="M6.4 6.1h1.2V4.5H6.4v1.6zm0 3.4h1.2V6.9H6.4v2.6z"/>
             </svg>
             <span id="model-tip" class="info-tip__bubble" role="tooltip">
-              Enter the OpenRouter model ID (e.g. openai/gpt-oss-120b:free). Browse models on the OpenRouter dashboard and paste the model name here.
+              Enter the model ID your provider expects (e.g. openai/gpt-oss-120b:free on OpenRouter).
             </span>
           </span>
         </div>

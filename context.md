@@ -30,12 +30,12 @@ This file is **not** user documentation. It is an AI context index for Cursor, C
 
 | Field | Value |
 |---|---|
-| Purpose | Electron desktop app to chat with OpenRouter AI models |
+| Purpose | Electron desktop app to chat with OpenAI-compatible AI models |
 | Architecture | Classic Electron: main (CommonJS) + preload bridge + static renderer (ES modules) |
 | Frameworks | Electron 28, electron-builder 25 |
 | Languages | JavaScript (no TypeScript, no bundler) |
 | Database | None — local JSON file in Electron `userData` |
-| External services | OpenRouter Chat Completions API (`/api/v1/chat/completions`) |
+| External services | User-configured OpenAI-compatible Chat Completions URL (default OpenRouter `/api/v1/chat/completions`) |
 | Deployment | `electron-builder` → Windows NSIS installer → `dist/` |
 | Theme reference | `theme-profile.md` (dark token system) |
 | Git remote | `https://github.com/XeroDays/Open-Model-Listener.git` |
@@ -50,7 +50,7 @@ src/
 │   ├── index.js
 │   ├── ipc/register.js
 │   ├── middlewares/    # Domain handlers (not HTTP middleware)
-│   ├── services/       # Config persistence, OpenRouter API
+│   ├── services/       # Config persistence, chat completions API
 │   ├── windows/        # BrowserWindow factory
 │   └── helpers/        # (empty — reserved)
 ├── preload/index.js    # contextBridge → window.electronAPI
@@ -81,9 +81,10 @@ theme-profile.md
 - **Chat context** — renderer holds full `messages[]` array; every request sends entire history for multi-turn context.
 - **Streaming** — main → renderer via `sender.send` (one-way push), not `ipcMain.handle` return values.
 - **Stream batching (two layers)** — `chat-middleware` batches IPC deltas before push; `chat.js` batches DOM updates before paint. Prevents UI freeze on long Ultra High reasoning streams (40k+ chars).
-- **OpenRouter reasoning** — only one of `reasoning.effort` OR `reasoning.max_tokens` per request (mutually exclusive).
+- **OpenRouter reasoning** — only one of `reasoning.effort` OR `reasoning.max_tokens` per request (mutually exclusive). Sent only when `apiUrl` hostname contains `openrouter.ai`.
 - **Thinking display** — reasoning tokens streamed separately via `oml:chat-reasoning-delta`; shown in collapsible panel in chat UI; display-only (not stored in `messages[]`). Body DOM updated only when panel is expanded; label char count updates on flush interval.
 - **API network logging** — `ai-service.js` logs request/response/stream lifecycle to main-process console; API key always masked.
+- **Configurable endpoint** — full chat completions URL from config (`apiUrl`); default OpenRouter. OpenRouter-only headers/body fields gated by hostname.
 
 ---
 
@@ -109,7 +110,7 @@ App Start → `index.js` → `registerIpcHandlers()` → `createMainWindow()` �
 
 ### Configuration Form (Home Screen)
 
-Purpose: Collect and persist OpenRouter API key, model name, reasoning level.
+Purpose: Collect and persist API URL, API key, model name, reasoning level.
 
 Entry Points:
 - `src/renderer/index.html`
@@ -127,12 +128,13 @@ Related Files:
 
 Dependencies:
 - IPC: `oml:save-config`, `oml:get-config`
-- Config keys: `apiKey`, `model`, `reasoning`
+- Config keys: `apiUrl`, `apiKey`, `model`, `reasoning`
 
 Workflow:
 Config Form → `saveConfig` IPC → `config-middleware` → `config-service.set()` → `user-config.json` → navigate to `screens/chat/index.html`
 
 Defaults:
+- API URL: `https://openrouter.ai/api/v1/chat/completions`
 - Model: `openai/gpt-oss-120b:free`
 - Reasoning: `None`
 
@@ -140,7 +142,7 @@ Defaults:
 
 ### Chat with AI Model
 
-Purpose: Multi-turn streaming conversation with configured OpenRouter model.
+Purpose: Multi-turn streaming conversation with the configured OpenAI-compatible model.
 
 Entry Points:
 - `src/renderer/screens/chat/index.html`
@@ -156,8 +158,8 @@ Related Files:
 - `src/preload/index.js` (`chatSend`, `onChatDelta`, `onChatReasoningDelta`, `onChatDone`, `onChatError`)
 
 Dependencies:
-- Config service (apiKey, model, reasoning)
-- OpenRouter streaming API
+- Config service (apiUrl, apiKey, model, reasoning)
+- OpenAI-compatible streaming API (default OpenRouter)
 - IPC: `oml:chat-send`, `oml:chat-delta`, `oml:chat-reasoning-delta`, `oml:chat-done`, `oml:chat-error`
 
 Workflow:
@@ -275,7 +277,7 @@ Entry Points:
 
 ### API Network Logging
 
-Purpose: Observable OpenRouter request/response/stream lifecycle in main-process console (terminal / Debug Console).
+Purpose: Observable chat-completions request/response/stream lifecycle in main-process console (terminal / Debug Console).
 
 Entry Points:
 - `src/main/services/ai-service.js` → `streamChat()`
@@ -285,7 +287,7 @@ Log prefixes: `[ai-service]`, `[chat-middleware]`
 
 #### Request log (`streamChat → request`)
 
-Fields: url, method, model, stream, masked apiKey, messageCount, promptChars, roles, reasoning options, header summary (key masked)
+Fields: url (configured `apiUrl`), method, model, stream, masked apiKey, messageCount, promptChars, roles, reasoning options (OpenRouter only), header summary (key masked)
 
 #### Response log (`streamChat ← response`)
 
@@ -301,7 +303,7 @@ Fields: model, status, statusText, ok, elapsedMs, contentType
 | `reasoningCount` | Reasoning delta events received |
 | `reasoningChars` | Total reasoning characters streamed |
 | `sseChunks` | Raw SSE read chunks from `ReadableStream` |
-| `lastUsage` | Token usage object from final SSE chunk (when OpenRouter sends it) |
+| `lastUsage` | Token usage object from final SSE chunk (when the provider sends it) |
 | `timeToFirstByteMs` | Request start → HTTP response headers |
 | `timeToFirstContentMs` | Request start → first content delta |
 | `timeToFirstReasoningMs` | Request start → first reasoning delta |
@@ -319,6 +321,8 @@ Fields: model, status, statusText, ok, elapsedMs, contentType
 |---|---|
 | `maskApiKey(key)` | Shows `sk-o...xxxx`; never logs full key |
 | `summarizeMessages(messages)` | messageCount, promptChars, roles — for request log without dumping prompt text |
+| `resolveApiUrl(apiUrl)` | Validates http/https URL; returns `{ url }` or `{ error }` |
+| `isOpenRouterUrl(apiUrl)` | True when hostname contains `openrouter.ai` |
 
 #### Future utilization
 
@@ -355,7 +359,7 @@ Related Files:
 Trigger: User submits config form on home screen.
 
 Flow:
-`app.js` form submit → `electronAPI.saveConfig({ apiKey, model, reasoning })` → `ipc/register.js` → `config-middleware.SaveConfig` → `config-service.set()` × 3 → write `user-config.json` → redirect to chat screen
+`app.js` form submit → validate `apiUrl` (`http:`/`https:`) → `electronAPI.saveConfig({ apiUrl, apiKey, model, reasoning })` → `ipc/register.js` → `config-middleware.SaveConfig` → `config-service.set()` × 4 → write `user-config.json` → redirect to chat screen
 
 Files:
 - `src/renderer/scripts/app.js`
@@ -370,7 +374,7 @@ Files:
 Trigger: Home screen `DOMContentLoaded`.
 
 Flow:
-`app.js` → `electronAPI.getConfig(key)` × 3 → `config-middleware.GetConfig` → `config-service.get()` → pre-fill form fields
+`app.js` → `electronAPI.getConfig(key)` × 4 → `config-middleware.GetConfig` → `config-service.get()` → pre-fill form fields
 
 Files:
 - `src/renderer/scripts/app.js`
@@ -384,7 +388,7 @@ Files:
 Trigger: User clicks Send or Ctrl+Enter on chat screen.
 
 Flow:
-`chat.js` → append user bubble + push to `messages[]` → `electronAPI.chatSend({ messages })` → `chat-middleware.SendMessage` (entry log) → read config → `buildReasoningOptions()` → `ai-service.streamChat()` (request/response logs) → OpenRouter SSE → `createDeltaBatcher` → `CHAT_REASONING_DELTA` + `CHAT_DELTA` (batched IPC) → `chat.js` pending buffers + throttled DOM → batcher flush → `CHAT_DONE` → `renderRichContent` on response → store assistant `content` in `messages[]` (reasoning not persisted)
+`chat.js` → append user bubble + push to `messages[]` → `electronAPI.chatSend({ messages })` → `chat-middleware.SendMessage` (entry log) → read config (`apiUrl`, apiKey, model, reasoning) → `buildReasoningOptions()` → `ai-service.streamChat()` (request/response logs) → configured URL SSE → `createDeltaBatcher` → `CHAT_REASONING_DELTA` + `CHAT_DELTA` (batched IPC) → `chat.js` pending buffers + throttled DOM → batcher flush → `CHAT_DONE` → `renderRichContent` on response → store assistant `content` in `messages[]` (reasoning not persisted)
 
 Files:
 - `src/renderer/scripts/chat.js`
@@ -396,7 +400,7 @@ Files:
 
 ### Chat Error Handling
 
-Trigger: OpenRouter HTTP error, stream error, or missing config.
+Trigger: Provider HTTP error, stream error, or missing config.
 
 Flow:
 `ai-service` logs `[ai-service]` error → `onError` callback → `chat-middleware` logs `[chat-middleware]` error → `sender.send(CHAT_ERROR)` → renderer shows error bubble, removes incomplete AI block (thinking panel + response)
@@ -423,8 +427,9 @@ Files:
 | Reasoning level mapping | `src/main/middlewares/chat-middleware.js` → `buildReasoningOptions()` |
 | Stream DOM batching | `src/renderer/scripts/chat.js` → pending buffers + flush helpers |
 | API network logging | `src/main/services/ai-service.js` → `maskApiKey`, `summarizeMessages`, stream stats |
+| API URL resolve / OpenRouter extras | `src/main/services/ai-service.js` → `resolveApiUrl`, `isOpenRouterUrl`, `DEFAULT_API_URL` |
 | Config persistence (key/value JSON) | `src/main/services/config-service.js` |
-| OpenRouter streaming API | `src/main/services/ai-service.js` |
+| OpenAI-compatible streaming API | `src/main/services/ai-service.js` |
 | Reasoning delta parsing | `src/main/services/ai-service.js` → `extractReasoningDeltas()` |
 | Thinking panel UI | `src/renderer/scripts/chat.js`, `src/renderer/screens/chat/styles/chat.css` |
 | Health check placeholder | `src/main/middlewares/app-middleware.js` |
@@ -459,14 +464,14 @@ Renderer (chat.js) — holds messages[]
   → preload (chatSend)
   → ipcMain.handle (CHAT_SEND)
   → chat-middleware.SendMessage
-  → config-service.get(apiKey, model, reasoning)
+  → config-service.get(apiUrl, apiKey, model, reasoning)
   → ai-service.streamChat
-  → fetch OpenRouter API
+  → fetch configured apiUrl
 ```
 
 ### Chat Flow (streaming response)
 ```
-OpenRouter SSE
+Provider SSE (OpenAI-compatible)
   → ai-service (parse data: lines — content + reasoning; accumulate stats)
   → chat-middleware (createDeltaBatcher — 50ms coalesce)
   → sender.send(CHAT_REASONING_DELTA | CHAT_DELTA)
@@ -480,19 +485,21 @@ OpenRouter SSE
 
 ## Integration Registry
 
-### OpenRouter
+### OpenAI-compatible Chat Completions
 
 | Field | Value |
 |---|---|
 | Purpose | AI chat completions (streaming) |
-| Endpoint | `https://openrouter.ai/api/v1/chat/completions` |
-| Auth | Bearer token from user config (`apiKey`) |
+| Endpoint | User-configured full URL (`apiUrl`); default `https://openrouter.ai/api/v1/chat/completions` |
+| Auth | Bearer token from user config (`apiKey`) when present |
 | Files | `src/main/services/ai-service.js`, `src/main/middlewares/chat-middleware.js` |
 | Entry point | `ai-service.streamChat()` |
-| Headers | `Authorization`, `HTTP-Referer`, `X-Title` |
+| Common headers | `Content-Type`, `Authorization` (if apiKey set) |
+| OpenRouter-only extras | `HTTP-Referer`, `X-Title`, body `usage.include`, body `reasoning` — applied only when hostname contains `openrouter.ai` |
 | Streaming | SSE `data:` lines, `[DONE]` terminator |
-| Reasoning request | Optional `reasoning` object — effort OR max_tokens, never both |
+| Reasoning request | Optional `reasoning` object — effort OR max_tokens, never both (OpenRouter only) |
 | Reasoning response | `delta.reasoning`, `delta.reasoning_content`, or `delta.reasoning_details[].text` |
+| Helpers | `resolveApiUrl()`, `isOpenRouterUrl()`, `DEFAULT_API_URL` |
 
 Reasoning level mapping (`chat-middleware.buildReasoningOptions`):
 
@@ -511,7 +518,7 @@ Reasoning level mapping (`chat-middleware.buildReasoningOptions`):
 | Channel | Direction | Purpose |
 |---|---|---|
 | `oml:ping` | invoke → return | Health check |
-| `oml:save-config` | invoke → return | Save apiKey, model, reasoning |
+| `oml:save-config` | invoke → return | Save apiUrl, apiKey, model, reasoning |
 | `oml:get-config` | invoke → return | Read config by key |
 | `oml:chat-send` | invoke → return | Start streaming chat |
 | `oml:chat-delta` | main → renderer push | Stream response content delta |
@@ -524,13 +531,13 @@ Reasoning level mapping (`chat-middleware.buildReasoningOptions`):
 ## Dependency Impact Map
 
 ### config-service.js
-Changing may impact: config form save/load, chat API key/model/reasoning retrieval
+Changing may impact: config form save/load, chat API URL/key/model/reasoning retrieval
 
 ### config-middleware.js
 Changing may impact: home screen form, IPC save/get handlers
 
 ### ai-service.js
-Changing may impact: all chat streaming, error logging, OpenRouter request format
+Changing may impact: all chat streaming, error logging, request URL, OpenRouter-only extras (`resolveApiUrl`, `isOpenRouterUrl`)
 
 ### chat-middleware.js
 Changing may impact: reasoning level mapping, chat error forwarding, stream push to renderer, IPC batching intervals, flush-on-done ordering
@@ -568,7 +575,8 @@ Changing may impact: all UI screens and future components
 
 | Key | Type | Example |
 |---|---|---|
-| `apiKey` | string | OpenRouter API key |
+| `apiUrl` | string | `https://openrouter.ai/api/v1/chat/completions` |
+| `apiKey` | string | Provider API key |
 | `model` | string | `openai/gpt-oss-120b:free` |
 | `reasoning` | string | `None`, `Low`, `Medium`, `High`, `Ultra High` |
 

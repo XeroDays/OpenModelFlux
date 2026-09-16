@@ -49,6 +49,7 @@ function createDeltaBatcher(sender, channel, flushMs = 50) {
 function SendMessage({ messages } = {}, sender) {
   const apiKey = configService.get("apiKey");
   const model = configService.get("model");
+  const apiUrl = configService.get("apiUrl") || aiService.DEFAULT_API_URL;
   const reasoningLevel = configService.get("reasoning") || "None";
   const reasoningOptions = buildReasoningOptions(reasoningLevel);
 
@@ -58,6 +59,7 @@ function SendMessage({ messages } = {}, sender) {
   }
 
   console.log("[chat-middleware] SendMessage → starting stream", {
+    apiUrl,
     model,
     reasoningLevel,
     messageCount: messages.length,
@@ -77,6 +79,7 @@ function SendMessage({ messages } = {}, sender) {
     messages,
     model,
     apiKey,
+    apiUrl,
     reasoningOptions,
     (delta) => contentBatcher.push(delta),
     () => {
@@ -88,7 +91,7 @@ function SendMessage({ messages } = {}, sender) {
       reasoningBatcher?.flush();
       contentBatcher.flush();
       const message = err?.message || String(err);
-      console.error("[chat-middleware] SendMessage: OpenRouter request failed", {
+      console.error("[chat-middleware] SendMessage: API request failed", {
         model,
         reasoningLevel,
         messageCount: messages.length,

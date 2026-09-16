@@ -1,4 +1,4 @@
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const DEFAULT_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 function maskApiKey(key) {
   if (typeof key !== "string" || key.length < 8) return "(missing)";
@@ -37,6 +37,34 @@ function extractReasoningDeltas(delta) {
   return chunks;
 }
 
+function resolveApiUrl(apiUrl) {
+  if (typeof apiUrl !== "string" || !apiUrl.trim()) {
+    return { error: "API URL is not configured. Go back and enter an API URL." };
+  }
+
+  const trimmed = apiUrl.trim();
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { error: "API URL is invalid. Go back and enter a valid http or https URL." };
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { error: "API URL must use http or https." };
+  }
+
+  return { url: trimmed };
+}
+
+function isOpenRouterUrl(apiUrl) {
+  try {
+    return new URL(apiUrl).hostname.includes("openrouter.ai");
+  } catch {
+    return false;
+  }
+}
+
 function processStreamChunk(json, onDelta, onReasoningDelta, stats) {
   const choiceDelta = json.choices?.[0]?.delta;
   if (!choiceDelta) return;
@@ -69,14 +97,26 @@ async function streamChat(
   messages,
   model,
   apiKey,
+  apiUrl,
   reasoningOptions,
   onDelta,
   onDone,
   onError,
   onReasoningDelta = () => {}
 ) {
+  const resolved = resolveApiUrl(apiUrl);
+  if (resolved.error) {
+    const err = new Error(resolved.error);
+    console.error("[ai-service] streamChat: invalid API URL", { apiUrl: apiUrl || "(missing)" });
+    onError(err);
+    return;
+  }
+
+  const requestUrl = resolved.url;
+  const openRouter = isOpenRouterUrl(requestUrl);
+
   if (!apiKey) {
-    const err = new Error("API key is not configured. Go back and enter your OpenRouter API key.");
+    const err = new Error("API key is not configured. Go back and enter your API key.");
     console.error("[ai-service] streamChat: missing API key");
     onError(err);
     return;
@@ -127,14 +167,38 @@ async function streamChat(
     model,
     messages,
     stream: true,
-    usage: { include: true },
   };
-  if (reasoningOptions) {
-    body.reasoning = reasoningOptions;
+  if (openRouter) {
+    body.usage = { include: true };
+    if (reasoningOptions) {
+      body.reasoning = reasoningOptions;
+    }
+  }
+
+  const headers = {
+    "Content-Type": "application/json",
+  };
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+  if (openRouter) {
+    headers["HTTP-Referer"] = "https://github.com/XeroDays/Open-Model-Listener";
+    headers["X-Title"] = "Open Model Listener";
+  }
+
+  const logHeaders = {
+    "Content-Type": "application/json",
+  };
+  if (apiKey) {
+    logHeaders.Authorization = `Bearer ${maskApiKey(apiKey)}`;
+  }
+  if (openRouter) {
+    logHeaders["HTTP-Referer"] = headers["HTTP-Referer"];
+    logHeaders["X-Title"] = headers["X-Title"];
   }
 
   console.log("[ai-service] streamChat → request", {
-    url: OPENROUTER_URL,
+    url: requestUrl,
     method: "POST",
     model,
     stream: true,
@@ -142,24 +206,14 @@ async function streamChat(
     messageCount: msgSummary.messageCount,
     promptChars: msgSummary.promptChars,
     roles: msgSummary.roles,
-    reasoning: reasoningOptions ?? null,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${maskApiKey(apiKey)}`,
-      "HTTP-Referer": "https://github.com/XeroDays/Open-Model-Listener",
-      "X-Title": "Open Model Listener",
-    },
+    reasoning: openRouter ? reasoningOptions ?? null : null,
+    headers: logHeaders,
   });
 
   try {
-    const res = await fetch(OPENROUTER_URL, {
+    const res = await fetch(requestUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://github.com/XeroDays/Open-Model-Listener",
-        "X-Title": "Open Model Listener",
-      },
+      headers,
       body: JSON.stringify(body),
     });
 
@@ -183,7 +237,7 @@ async function streamChat(
         elapsedMs: Date.now() - startedAt,
         body: errText.slice(0, 800),
       });
-      onError(new Error(`OpenRouter ${res.status}: ${errText.slice(0, 400)}`));
+      onError(new Error(`API ${res.status}: ${errText.slice(0, 400)}`));
       return;
     }
 
@@ -192,7 +246,7 @@ async function streamChat(
         model,
         elapsedMs: Date.now() - startedAt,
       });
-      onError(new Error("OpenRouter response has no body"));
+      onError(new Error("API response has no body"));
       return;
     }
 
@@ -261,4 +315,4 @@ async function streamChat(
   }
 }
 
-module.exports = { streamChat };
+module.exports = { streamChat, DEFAULT_API_URL };
